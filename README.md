@@ -208,3 +208,15 @@ scripts/generate-runtime.sh assembles the embedded CPython runtime + bundled gli
 scripts/benchmark-ingest.py opt-in 100M-row CSV ingest / RSS check
 AGENTS.md                   architecture, idioms, and test guidance for contributors
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+`loupe`'s own source is MIT. A release binary additionally bundles third-party
+runtime components, unmodified, under their own licenses: CPython (PSF), Polars,
+NumPy, matplotlib, fastexcel, and uPlot (all permissive), plus — in the
+`-tags loupe_embed` build — glibc (LGPL-2.1), libstdc++ / libgcc_s (GPL-3.0 with
+the GCC Runtime Library Exception, which permits this), and zlib. Redistributing
+the binary carries those components' obligations; the MIT license covers this
+repository's code.
