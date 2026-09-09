@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe — Python plotting workbench</title>
+<script>
+  // Apply the saved preference before painting; storage may be unavailable.
+  try {
+    const saved = localStorage.getItem("loupe-theme");
+    document.documentElement.dataset.theme = saved === "light" || saved === "dark"
+      ? saved : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  } catch {
+    document.documentElement.dataset.theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+</script>
+<link rel="stylesheet" href="/vendor/uPlot.min.css">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f3f5f7; --surface: #ffffff; --subtle: #f8fafb;
+    --text: #18252f; --muted: #61717f; --border: #dfe6eb;
+    --accent: #087d71; --accent-hover: #06665c; --accent-soft: #e6f5f0;
+    --plot: #087d71; --grid: #e8edf1; --error: #be3445;
+    --shadow: 0 4px 24px #142c4010;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #10151c; --surface: #181f28; --subtle: #141b23;
+    --text: #e3eaf0; --muted: #98a9b9; --border: #2c3845;
+    --accent: #63d6bb; --accent-hover: #8ae5ce; --accent-soft: #203b36;
+    --plot: #63d6bb; --grid: #2a3541; --error: #ff8a98;
+    --shadow: 0 4px 24px #00000020;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+  button, textarea { font: inherit; }
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 7px 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; }
+  button:hover { background: var(--subtle); border-color: var(--muted); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .app { max-width: 1600px; margin: auto; padding: 0 28px 24px; }
+  .app-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 84px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
+  .brand-mark svg { width: 24px; height: 24px; }
+  h1 { margin: 0; font-size: 19px; letter-spacing: -0.6px; }
+  .subtitle { margin: 0; color: var(--muted); font-size: 12px; }
+  .header-actions { display: flex; align-items: center; gap: 20px; }
+  .connection { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .connection::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .connection[data-connected="true"]::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  main { display: grid; gap: 18px; }
+  .panel { min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+  .panel-header { min-height: 58px; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+  h2 { margin: 0; font-size: 13px; font-weight: 650; }
+  .eyebrow { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; }
+  .panel-heading { display: flex; align-items: center; gap: 12px; }
+  .badge { color: var(--muted); background: var(--subtle); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; font-size: 10px; }
+  .plot-body { position: relative; padding: 22px 20px 8px; }
+  #chart { width: 100%; height: clamp(280px, 42vh, 480px); }
+  .empty-state { position: absolute; inset: 22px 20px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; color: var(--muted); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 22px 22px; border-radius: 6px; }
+  .empty-state[hidden] { display: none; }
+  .empty-state svg { width: 48px; height: 48px; color: var(--accent); margin-bottom: 14px; }
+  .empty-state strong { color: var(--text); font-size: 15px; font-weight: 550; }
+  .empty-state p { margin: 6px 0; font-size: 12px; }
+  .plot-footer { display: flex; justify-content: space-between; padding: 8px 20px 14px; color: var(--muted); font-size: 11px; }
+  #controls { display: flex; flex-wrap: wrap; gap: 8px; }
+  #run { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  :root[data-theme="dark"] #run { color: #10251f; }
+  #run:hover { background: var(--accent-hover); }
+  #stop { color: var(--muted); }
+  .repl-body { display: grid; grid-template-columns: 1fr 1fr; }
+  .editor-pane, .output-pane { min-width: 0; }
+  .editor-pane { border-right: 1px solid var(--border); }
+  .pane-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px 6px; color: var(--muted); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+  #examples { font: inherit; letter-spacing: 0; text-transform: none; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 24px 4px 8px; cursor: pointer; }
+  #examples:hover { border-color: var(--muted); }
+  .editor { display: flex; gap: 12px; padding: 8px 18px 18px; }
+  .prompt { font-family: monospace; color: var(--accent); padding-top: 1px; user-select: none; }
+  #code { display: block; width: 100%; min-height: 164px; resize: vertical; border: 0; border-radius: 3px; padding: 0 4px; background: transparent; color: var(--text); font: 13px/1.75 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 4; }
+  .output-scroll { height: 202px; overflow: auto; padding: 8px 18px 18px; }
+  #output { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.75 ui-monospace, SFMono-Regular, Consolas, monospace; }
+  #output:empty::before { content: "Results and messages will appear here."; color: var(--muted); }
+  .output-scroll:has(#data:not(:empty)) #output:empty { display: none; }
+  #data { overflow-x: auto; }
+  #data:empty { display: none; }
+  #data p { color: var(--muted); font-size: 12px; }
+  #data table { border-collapse: collapse; width: 100%; font: 12px/1.5 ui-monospace, monospace; }
+  #data th, #data td { border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; white-space: nowrap; }
+  #data th { background: var(--subtle); color: var(--muted); font-weight: 500; }
+  .repl-footer { padding: 9px 18px; border-top: 1px solid var(--border); background: var(--subtle); color: var(--muted); font-size: 11px; }
+  kbd { font: inherit; border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
+  .stderr, .error { color: var(--error); }
+  .uplot { color: var(--text); font-family: ui-monospace, monospace; }
+  .uplot .u-title { font-size: 14px; }
+  .uplot .u-legend { font-size: 11px; }
+  .uplot .u-cursor-x, .uplot .u-cursor-y { border-color: var(--muted); }
+  .uplot .u-select { background: var(--accent-soft); opacity: 0.6; }
+  .u-tooltip { position: absolute; display: none; transform: translate(-50%, -120%); background: var(--text); color: var(--surface); box-shadow: var(--shadow); padding: 5px 9px; border-radius: 6px; font-size: 11px; white-space: nowrap; pointer-events: none; }
+  @media (max-width: 700px) {
+    .app { padding: 0 12px 16px; }
+    .app-header { min-height: 72px; }
+    .header-actions { gap: 10px; }
+    .subtitle, .connection { display: none; }
+    .panel-header { padding: 12px; flex-wrap: wrap; }
+    .plot-body { padding: 12px 8px 0; }
+    .repl-body { grid-template-columns: 1fr; }
+    .editor-pane { border-right: 0; border-bottom: 1px solid var(--border); }
+    #code { min-height: 120px; }
+    .output-scroll { height: 150px; }
+    .plot-footer { padding-inline: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16M7 15l4-5 4 3 5-8"/></svg></div>
+      <div><h1>Loupe</h1><p class="subtitle">Your local Python plotting workbench</p></div>
+    </div>
+    <div class="header-actions">
+      <span id="connection" class="connection" role="status">Connecting</span>
+      <button id="theme-toggle" type="button" aria-label="Toggle dark mode" aria-pressed="false">Dark mode</button>
+    </div>
+  </header>
+  <main>
+    <section class="panel" id="plot-panel" aria-labelledby="plot-heading">
+      <div class="panel-header"><div class="panel-heading"><h2 id="plot-heading">Plot</h2><span class="badge">Interactive</span></div><button id="reset-zoom" disabled>Reset zoom</button></div>
+      <div class="plot-body">
+        <div id="chart"></div>
+        <div id="plot-empty" class="empty-state">
+          <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8v33h34M12 31l8-12 9 6 11-16"/><circle cx="20" cy="19" r="2" fill="currentColor"/></svg>
+          <strong>A little code. A clearer picture.</strong><p>Run the example below to create your first plot.</p>
+        </div>
+      </div>
+      <div class="plot-footer"><span>Drag to zoom · Double-click to reset</span><span id="plot-info" title="In-view counts sample points inside the axes. Points can overlap; sampled points are not the total source rows.">Ready to plot</span></div>
+    </section>
+    <section class="panel" id="repl-panel" aria-labelledby="repl-heading">
+      <div class="panel-header">
+        <div class="panel-heading"><h2 id="repl-heading">Python REPL</h2><span class="badge">Persistent session</span></div>
+        <div id="controls"><button id="stop" disabled title="Stops execution and clears session variables">Stop and reset kernel</button><button id="run" disabled><span aria-hidden="true">▶</span> Run code</button></div>
+      </div>
+      <div class="repl-body">
+        <div class="editor-pane"><div class="pane-label"><label for="code">Input</label><select id="examples" aria-label="Load an example into the editor"><option value="" selected>Load an example…</option></select></div><div class="editor"><span class="prompt" aria-hidden="true">&gt;&gt;&gt;</span><textarea id="code" rows="6" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="editor-help">x = np.linspace(0, 4 * np.pi, 1000)
+y = np.sin(x) * np.exp(-x / 12)
+plot(x, y, title="Damped wave")</textarea></div></div>
+        <div class="output-pane"><div class="pane-label">Output</div><div class="output-scroll"><pre id="output" role="log" aria-label="REPL output"></pre><div id="data" aria-live="polite"></div></div></div>
+      </div>
+      <div class="repl-footer" id="editor-help"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run · NumPy and Polars are ready as <code>np</code> and <code>pl</code></div>
+    </section>
+  </main>
+</div>
+<script src="/vendor/uPlot.iife.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

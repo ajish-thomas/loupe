@@ -1,0 +1,27 @@
+[project]
+name = "loupe-kernel"
+version = "0.1.0"
+description = "Embedded plotting kernel for the loupe single-binary workbench"
+readme = "README.md"
+authors = [
+    { name = "Ajish Thomas", email = "ajish@adenmesh.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastexcel>=0.21.0",
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.3",
+    "polars>=1.44.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
