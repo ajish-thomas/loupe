@@ -17,6 +17,13 @@ instead of just stretching the pixels already on screen.
 ./loupe                # serves on 127.0.0.1:<port>, opens your browser
 ```
 
+![loupe: a browser plotting workbench — a Python REPL below an interactive chart
+that re-aggregates on zoom](docs/screenshot.png)
+
+The REPL runs `scatter(x, y, max_points=8000, …)`; the chart shows the reduced
+sample, reports how many points are in view, and re-resolves detail from the
+kernel each time the viewport settles.
+
 ---
 
 ## What it does
