@@ -17,20 +17,26 @@ instead of just stretching the pixels already on screen.
 ./loupe                # serves on 127.0.0.1:<port>, opens your browser
 ```
 
-![loupe: a browser plotting workbench — a Python REPL below an interactive chart
-that re-aggregates on zoom](docs/screenshot.png)
+![loupe showing a colored-scatter heatmap with bucket legend, editable labels,
+export controls, and an expandable local-file tree](docs/screenshot.png)
 
-The REPL runs `scatter(x, y, max_points=8000, …)`; the chart shows the reduced
-sample, reports how many points are in view, and re-resolves detail from the
-kernel each time the viewport settles.
+The screenshot shows the `heatmap()` colored-scatter view: X/Y/color triples,
+an Inferno bucket legend, editable labels, image export, and the Data tab's
+local-file tree. The chart re-resolves detail from the kernel each time the
+viewport settles.
 
 ---
 
 ## What it does
 
 - **Plotting-focused REPL in the browser.** A persistent Python session with
-  `np`, `pl`, and curated `plot()` / `scatter()` / `histogram()` commands ready
-  to use. Output, tracebacks, and data previews render alongside the editor.
+  `np`, `pl`, and curated `plot()` / `scatter()` / `histogram()` / `heatmap()`
+  commands ready to use. Output, tracebacks, and data previews render alongside
+  the editor.
+- **Data tab.** Browse local folders, import a supported file, select columns,
+  and create a line plot, scatter plot, histogram, or heatmap without writing Python.
+- **Plot labels and images.** Edit the title and axis labels, download a themed
+  PNG, or copy the image to the clipboard.
 - **Lazy ingest.** `scan("data.csv")` returns a Polars `LazyFrame`; your
   `filter` / `select` / `group_by` extend a query plan that only executes when a
   plot or a bounded preview needs it. Large CSVs are streamed once to a session
@@ -74,7 +80,8 @@ loupe (single Go binary)
   deliberately not the Jupyter/pyzmq protocol. The user's `stdout`/`stderr` are
   captured into `stream` messages; the socket itself is never on stdio.
 - **Figures:** one JSON header naming each array's byte length, immediately
-  followed by the raw `float32` bytes (x then y), dropped zero-copy into uPlot.
+  followed by raw `float32` bytes (x then y; heatmaps append color values).
+  Heatmap headers also carry the color range, label, colormap, and bucket count.
 - **Zoom:** on zoom-settle the browser sends a `zoom_request` with the new
   x-range; the kernel replays the current figure's reduction for that range
   against the source. Because the kernel is a local process on a socket, this
@@ -110,10 +117,12 @@ test-python`, `make test-web`.
 ### A real single, air-gapped binary
 
 ```sh
-./scripts/generate-runtime.sh                          # downloads + assembles internal/embedded/runtime.tar.zst (~90 MB, needs network)
-CGO_ENABLED=0 go build -tags loupe_embed -o loupe .
+make release                                           # generates the runtime when needed and builds ./loupe
 ./loupe                                                # extracts to $XDG_CACHE_HOME/loupe/ on first run; no network, ever, after that
 ```
+
+Run `make test-release` to build the bundled binary, exercise the embedded
+runtime tests, and drive that binary through the Chromium smoke test.
 
 - `scripts/generate-runtime.sh` is pinned to a specific
   [`python-build-standalone`](https://github.com/astral-sh/python-build-standalone)
@@ -139,17 +148,60 @@ plot("x", "y", data=df)                 # M4 reduction is appended to the same l
 df = scan("measurements.csv", schema_overrides={"x": pl.Float64})
 ```
 
-- **Built-in commands:** `plot`, `scatter`, `histogram` — each takes either
+- **Built-in commands:** `plot`, `scatter`, `histogram`, `heatmap` — each takes either
   column names + `data=` (a LazyFrame/DataFrame) or array-likes directly.
   `scan`, `preview`, `np`, `pl` are in scope; `api` / `engine` / `ingest` are
   there as an escape hatch.
 - **Examples menu** in the Input pane fills the editor with a starter snippet
   you then run yourself (Ctrl/⌘+Enter, or the Run button).
+- **Data tab:** starts in the directory where loupe was launched. Enter an
+  absolute directory path and press Enter, or navigate with the expandable
+  folder tree. Up and Refresh live in the tree widget's toolbar.
+  Folder and file icons, format/size hints, and a highlighted selection help
+  identify files. Folders load on first expansion; Refresh reloads the current
+  tree. Arrow keys navigate, Right/Left expand/collapse, and Enter opens a folder
+  or imports a file. Selecting a file
+  imports it lazily as `df` in the shared Python session (replacing any existing
+  `df`); choose X/Y columns and a chart type, then Plot. Histogram uses X only.
+  Import and plotting errors appear in the tab. Files stay on disk; they are
+  not uploaded through the browser.
+- **Heatmap (colored scatter):** choose X, Y, and a numeric Color column, such
+  as `irdrop`. This colors individual points; it does not create a grid or
+  density map. Choose 2–16 equal-width value buckets (8 by default) and
+  `viridis`, `plasma`, `inferno`, `coolwarm`, or `turbo`. The plot's Colormap
+  selector recolors immediately, and hover shows the third-column value.
+  The legend and PNG/clipboard exports include bucket ranges. The source-wide
+  finite color range stays fixed through zoom, including when the extrema
+  were not sampled. Constant values use a single color; empty data has no scale.
+  Rows with null/non-finite values in any of the three columns are omitted.
+  All three values use float32 precision. Up to 8,000 triples are sampled
+  systematically per viewport; rare features can be missed, and this feature
+  has not been benchmarked on 100M rows.
+
+  ```python
+  heatmap("x", "y", "irdrop", data=df, cmap="inferno", bins=8)
+  # Array inputs also work:
+  heatmap(x, y, irdrop, cmap="viridis", max_points=8000)
+  ```
+- **Labels:** the three inputs above the chart override its displayed title
+  and axis labels. An empty title uses the Python figure's title. Labels survive
+  zoom and theme changes for the current browser session; a kernel restart
+  clears them and requires re-importing data. Data plots prefill the axis labels.
+- **Chart bounds:** full views pad both ends of each axis by 5% of the data
+  span so edge markers remain visible. Constant values also receive padding.
+  Zoom preserves the selected X range; Y continues to autoscale with padding.
+- **Export PNG / Copy image:** include the displayed title, axes, and data on
+  an opaque background matching the current theme. Clipboard support and
+  permission depend on the browser; failures appear beside the controls.
+  SVG/PDF export is not implemented.
 - **Ingest:** CSV, Parquet, NDJSON/JSONL, IPC/Arrow. CSVs ≥ 64 MiB stream to a
   session Parquet cache keyed by source metadata and parsing options; the cache
   is removed when the kernel resets or shuts down. `cache_threshold`,
   `cache_dir`, `infer_schema_length` (default 10,000), and `try_parse_dates`
   (default `True`) are `scan()` arguments.
+  Plain CSV conversion uses roughly 1 MiB chunks ending at complete records,
+  writes ordered Parquet parts with one inferred schema, and publishes the
+  dataset only after every part succeeds. Quoted multiline fields are preserved.
 - **Previews:** a trailing LazyFrame/DataFrame auto-displays up to 20 rows;
   `preview(df, n=…)` allows 1–100 and reports whether more exist. A preview
   collects `head(n+1)` only — though a user query such as a global sort can
@@ -179,6 +231,15 @@ still completes, but it is over target on both time and memory. Narrow zooms —
 the common interactive case — are well within target because Parquet pushdown
 does the work.
 
+CSV ingest measured on 2026-09-09 with Polars 1.44.1 / 16 threads: the
+100-million-row, two-Int64-column fixture (878,580,004 bytes, repeating 100k-row
+chunks) converted in **3.08 s at 324 MiB peak RSS**, down from **0.86 s at
+1,597 MiB** with the previous single streaming sink. The cache contained 838
+Parquet parts; a 20-row preview took 1.8 ms and cache reuse took 4.5 ms.
+This was a fresh-process measurement on `/tmp` (tmpfs), not cold-disk throughput.
+Repeat with `python/.venv/bin/python scripts/benchmark-ingest.py --max-rss-mib 400`.
+The RSS limit is an optional benchmark assertion, not a runtime memory quota.
+
 ## Status and limitations
 
 - **Linux x86-64 only.** No macOS, no Windows. A musl-only host (Alpine) is
@@ -190,8 +251,10 @@ does the work.
   third-party code is pandas/seaborn-shaped. That trade is reversible at build
   time (one line in the generator's requirements), not an architectural
   commitment.
-- **Large-CSV ingest RSS** peaks around 1.6 GiB on the dev machine for a 1e8-row
-  conversion — above the few-hundred-MB goal.
+- **CSV memory limits.** The measured plain, two-column CSV now meets the
+  few-hundred-MB ingest goal. Very wide schemas, oversized individual records,
+  large inference samples, and compressed CSVs do not have a verified RSS
+  ceiling. Compressed CSVs retain Polars' original streaming-sink path.
 - **Shared kernel state.** All tabs share one interpreter; Stop resets that
   shared namespace. Process isolation does not itself impose a memory quota.
 - **`noexec` cache dir** breaks extraction and does not yet produce a clear
@@ -208,7 +271,7 @@ main.go, internal/          Go host: extraction, subprocess supervision, HTTP/WS
 python/src/loupe_kernel/    the embedded Python side (uv project)
   __init__.py               REPL loop, stdout/stderr capture, JSON socket protocol
   ingest.py                 lazy scans, streamed CSV→Parquet cache, capped previews
-  api.py                    tier-1 curated commands: plot / scatter / histogram
+  api.py                    tier-1 commands: plot / scatter / histogram / heatmap
   engine.py                 M4 viewport aggregation, batch-and-merge streaming
 web/                        embedded UI + vendored uPlot; headless-Chromium smoke test
 scripts/generate-runtime.sh assembles the embedded CPython runtime + bundled glibc

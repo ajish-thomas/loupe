@@ -35,6 +35,7 @@ ArrayLike = Sequence[float] | np.ndarray | pl.Series
 DEFAULT_WIDTH = 1920  # PLAN.md's reference chart pixel width
 DEFAULT_MAX_POINTS = 8000  # PLAN.md's "~2-8k aggregated points"
 DEFAULT_BINS = 50
+COLORMAPS = ("viridis", "plasma", "inferno", "coolwarm", "turbo")
 
 
 @dataclass(frozen=True, eq=False)
@@ -60,9 +61,14 @@ class Figure:
     replot: Callable[[tuple[float, float] | None], "Figure"] | None = field(
         default=None, compare=False, repr=False
     )
+    color: np.ndarray | None = None
+    color_range: tuple[float, float] | None = None
+    color_label: str | None = None
+    cmap: str | None = None
+    color_bins: int | None = None
 
     def __post_init__(self) -> None:
-        if self.kind in ("line", "scatter"):
+        if self.kind in ("line", "scatter", "heatmap"):
             if self.x.shape != self.y.shape:
                 raise ValueError(
                     f"{self.kind} requires x and y of equal shape, "
@@ -76,6 +82,9 @@ class Figure:
                 )
         else:
             raise ValueError(f"unknown Figure kind {self.kind!r}")
+        if self.kind == "heatmap":
+            if self.color is None or self.color.shape != self.x.shape:
+                raise ValueError("heatmap requires matching x, y, and color shapes")
 
     def __len__(self) -> int:
         return self.y.shape[0]
@@ -92,6 +101,11 @@ class Figure:
             and self.title == other.title
             and np.array_equal(self.x, other.x)
             and np.array_equal(self.y, other.y)
+            and np.array_equal(self.color, other.color)
+            and self.color_range == other.color_range
+            and self.color_label == other.color_label
+            and self.cmap == other.cmap
+            and self.color_bins == other.color_bins
         )
 
 
@@ -252,6 +266,75 @@ def scatter(
     xa, ya = xa[order], ya[order]
 
     return Figure("scatter", xa.astype(np.float32), ya.astype(np.float32), title, replot=replot)
+
+
+def heatmap(
+    x: ArrayLike | str,
+    y: ArrayLike | str,
+    color: ArrayLike | str,
+    *,
+    data: pl.LazyFrame | pl.DataFrame | None = None,
+    cmap: str = "viridis",
+    bins: int = 8,
+    max_points: int = DEFAULT_MAX_POINTS,
+    x_range: tuple[float, float] | None = None,
+    title: str | None = None,
+) -> Figure:
+    """Sampled scatter colored by a third numeric value, with equal-width bins.
+
+    The finite source color range is fixed before viewport filtering/sampling.
+    Zoom keeps that scale. Sampling is systematic and preserves complete triples;
+    only scalar statistics and at most max_points rows are collected. Nulls,
+    non-finite values, and values outside float32's range are omitted.
+    """
+    _require_columns(data, x, y)
+    if cmap not in COLORMAPS:
+        raise ValueError(f"cmap must be one of {', '.join(COLORMAPS)}")
+    if isinstance(bins, bool) or not isinstance(bins, int) or not 2 <= bins <= 16:
+        raise ValueError("bins must be an integer between 2 and 16")
+    if isinstance(max_points, bool) or not isinstance(max_points, int) or max_points <= 0:
+        raise ValueError("max_points must be a positive integer")
+    if data is not None:
+        if not isinstance(data, (pl.LazyFrame, pl.DataFrame)):
+            raise TypeError("data must be a Polars DataFrame or LazyFrame")
+        if not isinstance(color, str):
+            raise TypeError("color must be a column name when data is given")
+        source = _as_lazyframe(data)
+        schema = source.collect_schema()
+        if any(not schema[name].is_numeric() for name in (x, y, color)):
+            raise TypeError("heatmap requires numeric x, y, and color columns")
+        source = source.select(
+            pl.col(name).cast(pl.Float32).alias(alias)
+            for name, alias in zip((x, y, color), ("_hx", "_hy", "_hc"))
+        )
+    else:
+        if isinstance(color, str):
+            raise TypeError("color must be array-like when data is not given")
+        arrays = [_as_f64_array(values) for values in (x, y, color)]
+        if any(a.ndim != 1 or a.shape != arrays[0].shape for a in arrays):
+            raise ValueError("x, y, and color must be one-dimensional arrays of equal shape")
+        source = pl.DataFrame(dict(zip(("_hx", "_hy", "_hc"), arrays))).lazy().cast(pl.Float32)
+    source = source.filter(pl.all_horizontal(pl.all().is_not_null() & pl.all().is_finite()))
+    bounds = source.select(pl.col("_hc").min().alias("lo"), pl.col("_hc").max().alias("hi")).collect(engine="streaming").row(0)
+    limits = (float(bounds[0]), float(bounds[1])) if bounds[0] is not None else None
+
+    def replot(new_range: tuple[float, float] | None) -> Figure:
+        view = source
+        if new_range is not None:
+            if len(new_range) != 2 or not all(np.isfinite(v) for v in new_range) or new_range[0] >= new_range[1]:
+                raise ValueError("x_range must contain two finite increasing values")
+            view = view.filter(pl.col("_hx").is_between(*new_range))
+        count = view.select(pl.len()).collect(engine="streaming").item()
+        step = max(1, -(-count // max_points))
+        result = (view.with_row_index("_row").filter(pl.col("_row") % step == 0)
+                  .drop("_row").head(max_points).collect(engine="streaming").sort("_hx", maintain_order=True))
+        return Figure(
+            "heatmap", engine.to_f32(result["_hx"]), engine.to_f32(result["_hy"]), title,
+            replot=replot, color=engine.to_f32(result["_hc"]), color_range=limits,
+            color_label=color if isinstance(color, str) else "Color", cmap=cmap, color_bins=bins,
+        )
+
+    return replot(x_range)
 
 
 def histogram(

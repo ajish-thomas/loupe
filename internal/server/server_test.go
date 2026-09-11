@@ -404,3 +404,42 @@ func TestWSIngestSchemaAndPreview(t *testing.T) {
 		t.Fatalf("failed: %+v", reply)
 	}
 }
+
+func TestWSHeatmapAndZoomCarryColorArray(t *testing.T) {
+	_, wsURL := testServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	for _, request := range []browserRequest{
+		{Type: "execute_request", MsgID: "heat", Code: `heatmap([3,1,2], [6,2,4], [30,10,20], cmap="plasma", bins=4)`},
+		{Type: "zoom_request", MsgID: "zoom", XRange: []float64{1, 2}},
+	} {
+		send(t, ctx, c, request)
+		header := recvText(t, ctx, c)
+		if header.Kind != "heatmap" || header.Cmap != "plasma" || header.ColorBins != 4 || len(header.ColorRange) != 2 || header.ColorRange[0] != 10 || header.ColorRange[1] != 30 || len(header.ByteLengths) != 3 {
+			t.Fatalf("bad heatmap header: %+v", header)
+		}
+		typ, payload, err := c.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := header.ByteLengths[0]
+		if typ != websocket.MessageBinary || len(payload) != n*3 {
+			t.Fatalf("bad payload: %v %d", typ, len(payload))
+		}
+		for i := 0; i < n; i += 4 {
+			x := math.Float32frombits(binary.LittleEndian.Uint32(payload[i:]))
+			color := math.Float32frombits(binary.LittleEndian.Uint32(payload[2*n+i:]))
+			if color != x*10 {
+				t.Fatalf("misaligned color: %v %v", x, color)
+			}
+		}
+		if reply := recvText(t, ctx, c); reply.Status != "ok" {
+			t.Fatalf("%+v", reply)
+		}
+	}
+}

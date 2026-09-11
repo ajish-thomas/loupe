@@ -429,6 +429,10 @@ func TestMalformedKernelFramesAreRejected(t *testing.T) {
 		`{"type":"figure","byte_lengths":[1,4]}`,
 		`{"type":"figure","byte_lengths":[67108864,4]}`,
 		`{"type":"figure","byte_lengths":[]}`,
+		`{"type":"figure","kind":"heatmap","byte_lengths":[4,4]}`,
+		`{"type":"figure","kind":"heatmap","byte_lengths":[4,4,8]}`,
+		`{"type":"figure","kind":"heatmap","byte_lengths":[-4,-4,-4]}`,
+		`{"type":"figure","kind":"heatmap","byte_lengths":[67108864,67108864,67108864]}`,
 		strings.Repeat("x", (1<<20)+1),
 	} {
 		m := &Manager{reader: bufio.NewReader(strings.NewReader(input + "\n"))}

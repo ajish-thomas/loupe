@@ -126,6 +126,7 @@ def _new_namespace() -> dict[str, Any]:
         "ingest": ingest,
         "plot": api.plot,
         "scatter": api.scatter,
+        "heatmap": api.heatmap,
         "histogram": api.histogram,
         "scan": ingest.scan,
         "preview": ingest.preview,
@@ -272,6 +273,12 @@ def _send_figure(f: IO[bytes], msg_id: str | None, fig: api.Figure) -> None:
     """
     x = np.ascontiguousarray(fig.x, dtype=np.float32)
     y = np.ascontiguousarray(fig.y, dtype=np.float32)
+    arrays = [x, y]
+    metadata = {}
+    if fig.kind == "heatmap":
+        arrays.append(np.ascontiguousarray(fig.color, dtype=np.float32))
+        metadata = {"color_range": fig.color_range, "color_label": fig.color_label,
+                    "cmap": fig.cmap, "color_bins": fig.color_bins}
     _send_json(
         f,
         {
@@ -280,11 +287,12 @@ def _send_figure(f: IO[bytes], msg_id: str | None, fig: api.Figure) -> None:
             "kind": fig.kind,
             "title": fig.title,
             "dtype": "float32",
-            "byte_lengths": [x.nbytes, y.nbytes],
+            "byte_lengths": [array.nbytes for array in arrays],
+            **metadata,
         },
     )
-    f.write(x.tobytes())
-    f.write(y.tobytes())
+    for array in arrays:
+        f.write(array.tobytes())
     f.flush()
 
 

@@ -31,6 +31,7 @@ func New(webDir string, km *kernel.Manager) *Server {
 	}
 	s.mux.Handle("/", http.FileServer(assets))
 	s.mux.HandleFunc("/ws", s.handleWS)
+	s.mux.HandleFunc("/fs", s.handleFS)
 	return s
 }
 

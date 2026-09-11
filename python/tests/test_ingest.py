@@ -1,4 +1,5 @@
 from pathlib import Path
+import gzip
 
 import polars as pl
 import pytest
@@ -179,3 +180,65 @@ def test_small_scan_and_schema_never_collect(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(pl.LazyFrame, "collect", fail_collect)
     with ingest.report_scans(lambda path, schema: None):
         assert isinstance(ingest.scan(path), pl.LazyFrame)
+
+
+@pytest.mark.parametrize("chunk_bytes", [1, 2, 7, 19, 64])
+@pytest.mark.parametrize("content", [
+    '"odd\nheader",text,date\r\n1,"hello\nworld",2026-09-08\r\n'
+    '2,"escaped ""quote"" and café",2026-09-09\r\n3,,2026-09-10',
+    '\ufeffx,y\n1,2\n\n3,4\n',
+    'x,y\n',
+    '\n\r\nx,y\n1,2\n',
+    'x,y\n1\n2,3\n',
+    'x,y\n1,"' + 'long\n' * 30 + 'record"\n2,plain\n',
+])
+def test_chunked_cache_matches_direct_scan(
+    tmp_path: Path, monkeypatch, chunk_bytes: int, content: str,
+) -> None:
+    path = tmp_path / "data.csv"
+    path.write_bytes(content.encode())
+    monkeypatch.setattr(ingest, "CSV_CACHE_CHUNK_BYTES", chunk_bytes)
+    expected = ingest.scan(path, cache_threshold=10_000).collect()
+    actual = ingest.scan(path, cache_threshold=0, cache_dir=tmp_path / "cache[1]").collect()
+    assert actual.equals(expected)
+
+
+def test_later_chunk_failure_removes_all_parts_and_can_retry(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "data.csv"
+    path.write_text("x\n1\n2\nbad\n")
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(ingest, "CSV_CACHE_CHUNK_BYTES", 4)
+    with pytest.raises(pl.exceptions.ComputeError):
+        ingest.scan(path, infer_schema_length=1, cache_threshold=0, cache_dir=cache)
+    assert list(cache.iterdir()) == []
+    result = ingest.scan(path, schema_overrides={"x": pl.String}, cache_threshold=0, cache_dir=cache)
+    assert result.collect()["x"].to_list() == ["1", "2", "bad"]
+
+
+def test_interrupted_conversion_removes_completed_parts(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "data.csv"
+    path.write_text("x\n1\n2\n3\n")
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(ingest, "CSV_CACHE_CHUNK_BYTES", 4)
+    sink = pl.LazyFrame.sink_parquet
+    calls = 0
+
+    def interrupt(lf, target, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise KeyboardInterrupt
+        return sink(lf, target, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        ingest.scan(path, cache_threshold=0, cache_dir=cache)
+    assert calls == 2
+    assert list(cache.iterdir()) == []
+
+
+def test_cache_preserves_compressed_csv_support(tmp_path: Path) -> None:
+    path = tmp_path / "compressed.csv"
+    path.write_bytes(gzip.compress(b"x,y\n1,2\n3,4\n"))
+    expected = ingest.scan(path).collect()
+    assert ingest.scan(path, cache_threshold=0, cache_dir=tmp_path / "cache").collect().equals(expected)

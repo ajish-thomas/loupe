@@ -428,3 +428,14 @@ def test_preview_failure_is_caught(kernel: KernelClient) -> None:
     assert messages[0]["type"] == "error"
     assert messages[-1]["status"] == "error"
     assert kernel.run("next", "42")[0]["text"] == "42"
+
+
+def test_heatmap_wire_and_execution_error_recovery(kernel):
+    messages = kernel.run('h', 'heatmap([2,1], [4,2], [20,10], bins=4)')
+    fig = messages[0]
+    assert fig['kind'] == 'heatmap'
+    assert fig['byte_lengths'] == [8,8,8]
+    assert fig['color_range'] == [10,20]
+    np.testing.assert_array_equal(np.frombuffer(fig['_raw'], dtype=np.float32), [1,2,2,4,10,20])
+    assert kernel.run('bad', 'heatmap([1],[2],[3], cmap="nope")')[-1]['status'] == 'error'
+    assert kernel.run('ok', '42')[0]['text'] == '42'

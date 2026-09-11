@@ -59,10 +59,14 @@ type Message struct {
 	Status string `json:"status,omitempty"`
 
 	// figure
-	Kind        string `json:"kind,omitempty"`
-	Title       string `json:"title,omitempty"`
-	Dtype       string `json:"dtype,omitempty"`
-	ByteLengths []int  `json:"byte_lengths,omitempty"`
+	Kind        string    `json:"kind,omitempty"`
+	Title       string    `json:"title,omitempty"`
+	Dtype       string    `json:"dtype,omitempty"`
+	ByteLengths []int     `json:"byte_lengths,omitempty"`
+	ColorRange  []float64 `json:"color_range,omitempty"`
+	ColorLabel  string    `json:"color_label,omitempty"`
+	Cmap        string    `json:"cmap,omitempty"`
+	ColorBins   int       `json:"color_bins,omitempty"`
 
 	// data_schema / data_preview
 	Path    string     `json:"path,omitempty"`
@@ -393,8 +397,15 @@ func (m *Manager) readMessage() (Message, error) {
 	}
 
 	if msg.Type == "figure" {
-		if len(msg.ByteLengths) != 2 {
-			return Message{}, fmt.Errorf("kernel: figure requires two byte lengths")
+		arrays := 2
+		if msg.Kind == "heatmap" {
+			arrays = 3
+		}
+		if len(msg.ByteLengths) != arrays {
+			return Message{}, fmt.Errorf("kernel: figure requires %d byte lengths", arrays)
+		}
+		if msg.Kind == "heatmap" && (msg.ByteLengths[0] != msg.ByteLengths[1] || msg.ByteLengths[0] != msg.ByteLengths[2]) {
+			return Message{}, fmt.Errorf("kernel: heatmap arrays must have equal byte lengths")
 		}
 		total := 0
 		for _, n := range msg.ByteLengths {

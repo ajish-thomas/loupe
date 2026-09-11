@@ -34,7 +34,44 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
-  button, textarea { font: inherit; }
+  button, textarea, input, select { font: inherit; }
+  [hidden] { display: none !important; }
+  input, select { min-width: 0; max-width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+  .plot-actions, .tabs, .file-navigation, .column-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .label-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px 18px 0; }
+  .label-controls label, .column-controls label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+  .column-controls { align-items: flex-end; }
+  .column-controls input, .column-controls select { height: 36px; }
+  .tabs button[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }
+  .data-body { padding: 18px; }
+  .file-browser { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--subtle); }
+  .file-browser .file-navigation { flex-wrap: nowrap; padding: 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .file-navigation input { flex: 1; width: 0; font-size: 12px; }
+  .file-navigation button { flex: none; width: 34px; min-height: 34px; padding: 7px; border-color: transparent; }
+  .file-navigation button svg { width: 18px; height: 18px; }
+  .file-browser #file-status { margin: 0; padding: 7px 12px; border-top: 1px solid var(--border); }
+  #file-list { max-height: 320px; overflow: auto; margin: 0; padding: 6px; }
+  #file-list, #file-list ul { list-style: none; }
+  #file-list ul { margin: 0 0 0 15px; padding: 0 0 0 12px; border-left: 1px solid var(--border); }
+  .tree-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
+  .tree-row:hover { background: var(--surface); }
+  .tree-item:focus-visible { outline: none; }
+  .tree-item:focus-visible > .tree-row { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tree-item[aria-selected="true"] > .tree-row { background: var(--accent-soft); color: var(--accent); }
+  .tree-item[aria-disabled="true"] > .tree-row { opacity: 0.5; cursor: not-allowed; }
+  .tree-icon { width: 18px; height: 18px; flex: none; color: var(--accent); }
+  .tree-chevron { width: 12px; height: 12px; flex: none; color: var(--muted); transition: transform 100ms; }
+  .tree-item[aria-expanded="true"] > .tree-row .tree-chevron { transform: rotate(90deg); }
+  .tree-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree-meta { flex: none; color: var(--muted); font-size: 10px; }
+  #heatmap-controls { padding: 8px 18px 0; font-size: 12px; }
+  #color-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 0 18px; font-size: 11px; color: var(--muted); }
+  #color-legend:empty { display: none; }
+  .color-bucket { display: inline-flex; align-items: center; gap: 5px; }
+  .color-swatch { width: 16px; height: 12px; border-radius: 2px; }
+  .tree-message { padding: 7px 8px; color: var(--muted); font-size: 12px; }
+  #file-status, #import-status, #export-status { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+  #export-status { padding-inline: 18px; }
   button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 7px 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; }
   button:hover { background: var(--subtle); border-color: var(--muted); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -127,7 +164,14 @@
   </header>
   <main>
     <section class="panel" id="plot-panel" aria-labelledby="plot-heading">
-      <div class="panel-header"><div class="panel-heading"><h2 id="plot-heading">Plot</h2><span class="badge">Interactive</span></div><button id="reset-zoom" disabled>Reset zoom</button></div>
+      <div class="panel-header"><div class="panel-heading"><h2 id="plot-heading">Plot</h2><span class="badge">Interactive</span></div><div class="plot-actions"><button id="export-png" disabled>Export PNG</button><button id="copy-image" disabled>Copy image</button><button id="reset-zoom" disabled>Reset zoom</button></div></div>
+      <div class="label-controls">
+        <label>Title<input id="label-title" placeholder="Use plot title"></label>
+        <label>X axis<input id="label-x" placeholder="X axis label"></label>
+        <label>Y axis<input id="label-y" placeholder="Y axis label"></label>
+      </div>
+      <div id="export-status" role="status"></div>
+      <div id="heatmap-controls" hidden><label>Colormap <select id="plot-cmap"></select></label></div>
       <div class="plot-body">
         <div id="chart"></div>
         <div id="plot-empty" class="empty-state">
@@ -135,9 +179,14 @@
           <strong>A little code. A clearer picture.</strong><p>Run the example below to create your first plot.</p>
         </div>
       </div>
+      <div id="color-legend" aria-label="Color scale"></div>
       <div class="plot-footer"><span>Drag to zoom · Double-click to reset</span><span id="plot-info" title="In-view counts sample points inside the axes. Points can overlap; sampled points are not the total source rows.">Ready to plot</span></div>
     </section>
-    <section class="panel" id="repl-panel" aria-labelledby="repl-heading">
+    <div class="tabs" role="tablist" aria-label="Plot input">
+      <button id="repl-tab" role="tab" aria-selected="true" aria-controls="repl-panel">Python REPL</button>
+      <button id="data-tab" role="tab" aria-selected="false" aria-controls="data-panel" tabindex="-1">Data</button>
+    </div>
+    <section class="panel" id="repl-panel" role="tabpanel" aria-labelledby="repl-tab">
       <div class="panel-header">
         <div class="panel-heading"><h2 id="repl-heading">Python REPL</h2><span class="badge">Persistent session</span></div>
         <div id="controls"><button id="stop" disabled title="Stops execution and clears session variables">Stop and reset kernel</button><button id="run" disabled><span aria-hidden="true">▶</span> Run code</button></div>
@@ -149,6 +198,31 @@ plot(x, y, title="Damped wave")</textarea></div></div>
         <div class="output-pane"><div class="pane-label">Output</div><div class="output-scroll"><pre id="output" role="log" aria-label="REPL output"></pre><div id="data" aria-live="polite"></div></div></div>
       </div>
       <div class="repl-footer" id="editor-help"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run · NumPy and Polars are ready as <code>np</code> and <code>pl</code></div>
+    </section>
+    <section class="panel" id="data-panel" role="tabpanel" aria-labelledby="data-tab" hidden>
+      <div class="panel-header"><h2>Open local data</h2><button id="data-stop" disabled>Stop and reset kernel</button></div>
+      <div class="data-body">
+        <div class="file-browser" role="group" aria-label="File browser">
+          <form id="file-navigation" class="file-navigation">
+            <input id="file-path" aria-label="Directory path" placeholder="Directory path" title="Enter a directory path and press Enter">
+            <button id="file-up" type="button" disabled aria-label="Up one directory" title="Up one directory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button>
+            <button id="file-refresh" type="button" aria-label="Refresh directory" title="Refresh directory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5M20 7v5"/></svg></button>
+          </form>
+          <ul id="file-list" role="tree" aria-label="Local files" aria-describedby="tree-help"></ul>
+          <p id="file-status" role="status"></p>
+        </div>
+        <p id="tree-help" class="subtitle">Expand folders to browse. Select a file to import. Use arrow keys to navigate.</p>
+        <p id="import-status" role="status">Choose a file to import.</p>
+        <div id="column-controls" class="column-controls" hidden>
+          <label>Chart<select id="data-kind"><option value="plot">Line</option><option value="scatter">Scatter</option><option value="histogram">Histogram</option><option value="heatmap">Heatmap (colored scatter)</option></select></label>
+          <label>X column<select id="data-x"></select></label>
+          <label id="data-y-label">Y column<select id="data-y"></select></label>
+          <label class="data-heatmap" hidden>Color column<select id="data-color"></select></label>
+          <label class="data-heatmap" hidden>Colormap<select id="data-cmap"></select></label>
+          <label class="data-heatmap" hidden>Buckets<input id="data-bins" type="number" min="2" max="16" value="8"></label>
+          <button id="data-plot" disabled>Plot</button>
+        </div>
+      </div>
     </section>
   </main>
 </div>

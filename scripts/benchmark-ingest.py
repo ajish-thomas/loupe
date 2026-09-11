@@ -17,7 +17,7 @@ import tempfile
 import time
 
 
-def measure(path: Path, cache: Path) -> None:
+def measure(path: Path, cache: Path, max_rss_mib: float | None) -> None:
     import polars as pl
     from loupe_kernel.ingest import preview, scan
 
@@ -31,17 +31,24 @@ def measure(path: Path, cache: Path) -> None:
     started = time.perf_counter()
     scan(path, cache_dir=cache, cache_threshold=0)
     reuse_seconds = time.perf_counter() - started
+    rows = lf.select(pl.len()).collect().item()
+    peak_rss_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
     print(json.dumps({
         "csv_bytes": path.stat().st_size,
-        "rows": lf.select(pl.len()).collect().item(),
+        "rows": rows,
+        "polars_version": pl.__version__,
+        "polars_threads": pl.thread_pool_size(),
+        "parquet_parts": sum(path.is_file() for path in cache.rglob("*.parquet")),
         "ingest_seconds": ingest_seconds,
         "preview_seconds": preview_seconds,
         "cache_reuse_seconds": reuse_seconds,
-        "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+        "peak_rss_mib": peak_rss_mib,
         "schema": schema,
         "preview_rows": result.data.height,
         "has_more": result.has_more,
     }, indent=2))
+    if max_rss_mib is not None and peak_rss_mib > max_rss_mib:
+        raise SystemExit(f"peak RSS {peak_rss_mib:.1f} MiB exceeds {max_rss_mib:.1f} MiB target")
 
 
 def main() -> None:
@@ -49,9 +56,12 @@ def main() -> None:
     parser.add_argument("--rows", type=int, default=100_000_000)
     parser.add_argument("--measure", type=Path)
     parser.add_argument("--cache", type=Path)
+    parser.add_argument("--max-rss-mib", type=float, help="fail if measured peak RSS exceeds this budget")
     args = parser.parse_args()
     if args.measure is not None:
-        measure(args.measure, args.cache)
+        if args.cache is None:
+            parser.error("--measure requires --cache")
+        measure(args.measure, args.cache, args.max_rss_mib)
         return
     if args.rows <= 0:
         parser.error("--rows must be positive")
@@ -66,9 +76,12 @@ def main() -> None:
                 target.write(chunk)
             for i in range(args.rows % chunk_rows):
                 target.write(f"{i},{i % 97}\n".encode())
-        subprocess.run([
+        command = [
             sys.executable, __file__, "--measure", str(path), "--cache", str(root / "cache")
-        ], check=True)
+        ]
+        if args.max_rss_mib is not None:
+            command.extend(["--max-rss-mib", str(args.max_rss_mib)])
+        subprocess.run(command, check=True)
 
 
 if __name__ == "__main__":
